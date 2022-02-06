@@ -33,6 +33,19 @@ public:
     virtual void init_serial(uint8_t serial_instance) {};
 
     virtual void handle_msg(const mavlink_message_t &msg) { return; }
+
+#if AP_SCRIPTING_ENABLED
+    // Returns false if scripting backing hasn't been setup
+    // Get distance from lua script
+    virtual bool handle_script_msg(float dist_m) { return false; }
+
+    // Set this to be the primary sensor in use for a given orientation. Used only by Lua Scripting
+    void set_primary(bool primary_device ) { _primary_backend = primary_device; }
+#endif
+
+    // returns true if this sensor backend should be the primary sensor (i.e read values of this sensor irrespective of its status)
+    bool primary_sensor() const { return _primary_backend; }
+
 #if HAL_MSP_RANGEFINDER_ENABLED
     virtual void handle_msp(const MSP::msp_rangefinder_data_message_t &pkt) { return; }
 #endif
@@ -81,6 +94,9 @@ protected:
 
     // semaphore for access to shared frontend data
     HAL_Semaphore _sem;
+
+    // Set this to true if this backend should be used as a primary sensor
+    bool _primary_backend;
 
     //Type Backend initialised with
     RangeFinder::Type _backend_type;
