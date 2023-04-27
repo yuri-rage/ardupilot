@@ -8,7 +8,7 @@ define CORE_CM7
 define SMPS_PWR
 
 # setup build for a peripheral firmware
-env AP_PERIPH 1
+# env AP_PERIPH 1
 
 # crystal frequency
 OSCILLATOR_HZ 24000000
@@ -46,12 +46,12 @@ PB8 LED_SCK OUTPUT LOW
 PB9 LED_DI OUTPUT HIGH
 
 define HAL_NO_LOGGING TRUE
-define HAL_NO_MONITOR_THREAD
+# define HAL_NO_MONITOR_THREAD
 
 PA13 JTMS-SWDIO SWD
 PA14 JTCK-SWCLK SWD
 
-define AP_PERIPH_HAVE_LED
+# define AP_PERIPH_HAVE_LED
 
 define CAN_APP_NODE_NAME "com.cubepilot.here3+"
 
