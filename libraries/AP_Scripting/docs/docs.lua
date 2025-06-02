@@ -3975,6 +3975,11 @@ function fence:get_margin_breaches() end
 ---@return number -- distance
 function fence:get_breach_distance(fence_type) end
 
+-- Returns true if the destination does not violate enabled fences
+---@param loc Location_ud
+---@return boolean
+function fence:check_destination_within_fence(loc) end
+
 -- desc
 ---@class (exact) stat_t_ud
 local stat_t_ud = {}
