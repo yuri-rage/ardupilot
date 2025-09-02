@@ -30,30 +30,30 @@
 #include <AP_HAL/AP_HAL.h>
 
 /*
- *  try to put a UBlox into binary mode. This is in two parts. 
- *
- * First we send a ubx binary message that enables the NAV_SOL message
- * at rate 1. Then we send a NMEA message to set the baud rate to our
- * desired rate. The reason for doing the NMEA message second is if we
- * send it first the second message will be ignored for a baud rate
- * change.
- * The reason we need the NAV_SOL rate message at all is some uBlox
- * modules are configured with all ubx binary messages off, which
- * would mean we would never detect it.
+ * Try to put a u-Blox into binary mode. This is in two parts:
 
- * running a uBlox at less than 38400 will lead to packet
- * corruption, as we can't receive the packets in the 200ms
- * window for 5Hz fixes. The NMEA startup message should force
- * the uBlox into 230400 no matter what rate it is configured
- * for.
+ * First, we send ubx binary messages that enable NAV_SOL and NAV_PVT at rate 1
+ * (only one will be supported, the other ignored). Then we send a NMEA message
+ * to configure the desired baud rate. The NMEA message is sent second because
+ * sending it first will cause subsequent messages to be ignored for a baud rate
+ * change. We need the NAV rate message(s) because some u-Blox modules are
+ * configured with all ubx binary messages off, and we'd never detect them.
+
+ * Running a u-Blox module at less than 38400 will lead to packet corruption, as
+ * we can't receive the packets in the 200ms window for 5Hz fixes. The NMEA
+ * startup message should force the uBlox into 230400 no matter what rate it is
+ * configured for.
+
  */
-#define UBLOX_SET_BINARY_115200 "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0001,115200,0*1C\r\n"
+ // TODO: what if we are connected to UART2? this only configures UART1
+// default 230400 baudrate
+#define UBLOX_SET_BINARY_230400 "\265\142\006\001\003\000\001\006\001\022\117\265\142\006\212\011\000\000\001\000\000\007\000\221\040\001\123\110$PUBX,41,1,0023,0001,230400,0*1E\r\n"
 
-// a variant with 230400 baudrate
-#define UBLOX_SET_BINARY_230400 "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0001,230400,0*1E\r\n"
+// a variant with 115200 baudrate
+ #define UBLOX_SET_BINARY_115200 "\265\142\006\001\003\000\001\006\001\022\117\265\142\006\212\011\000\000\001\000\000\007\000\221\040\001\123\110$PUBX,41,1,0023,0001,115200,0*1C\r\n"
 
 // a variant with 460800 baudrate
-#define UBLOX_SET_BINARY_460800 "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0001,460800,0*11\r\n"
+#define UBLOX_SET_BINARY_460800 "\265\142\006\001\003\000\001\006\001\022\117\265\142\006\212\011\000\000\001\000\000\007\000\221\040\001\123\110$PUBX,41,1,0023,0001,460800,0*11\r\n"
 
 #define UBLOX_RXM_RAW_LOGGING 1
 #define UBLOX_MAX_RXM_RAW_SATS 22
@@ -71,6 +71,9 @@
 #define UBLOX_MAX_PORTS 6
 #define UBLOX_MODULE_LEN 9
 
+#define UBX_MON_COMMS_UART1 2
+#define UBX_MON_COMMS_UART2 3
+
 #define RATE_POSLLH 1
 #define RATE_STATUS 1
 #define RATE_SOL 1
@@ -80,6 +83,7 @@
 #define RATE_DOP 1
 #define RATE_HW 5
 #define RATE_HW2 5
+#define RATE_MON_RF 5
 #define RATE_TIM_TM2 1
 
 #define CONFIG_RATE_NAV      (1<<0)
@@ -98,13 +102,13 @@
 #define CONFIG_RATE_PVT      (1<<13)
 #define CONFIG_TP5           (1<<14)
 #define CONFIG_RATE_TIMEGPS  (1<<15)
-#define CONFIG_TMODE_MODE    (1<<16)
-#define CONFIG_RTK_MOVBASE   (1<<17)
-#define CONFIG_TIM_TM2       (1<<18)
-#define CONFIG_F9            (1<<19)
-#define CONFIG_M10           (1<<20)
-#define CONFIG_L5            (1<<21)
-#define CONFIG_LAST          (1<<22) // this must always be the last bit
+#define CONFIG_TMODE_MODE       (1<<16)
+#define CONFIG_RTK_MOVBASE      (1<<17)
+#define CONFIG_TIM_TM2          (1<<18)
+#define CONFIG_VALSET_RATES     (1<<19)
+#define CONFIG_VALSET_GNSS      (1<<20)
+#define CONFIG_L5               (1<<21)
+#define CONFIG_LAST             (1<<22) // this must always be the last bit
 
 #define CONFIG_REQUIRED_INITIAL (CONFIG_RATE_NAV | CONFIG_RATE_POSLLH | CONFIG_RATE_STATUS | CONFIG_RATE_VELNED)
 
@@ -257,8 +261,10 @@ private:
     };
     // F9 config keys
     enum class ConfigKey : uint32_t {
-        TMODE_MODE = 0x20030001,
+        TMODE_MODE                      = 0x20030001,
         CFG_RATE_MEAS                   = 0x30210001,
+        CFG_RATE_NAV                    = 0x30210002,
+        CFG_RATE_TIME_REF               = 0x20210003,
 
         CFG_UART1_BAUDRATE              = 0x40520001,
         CFG_UART1_ENABLED               = 0x10520005,
@@ -277,6 +283,22 @@ private:
         CFG_UART2OUTPROT_UBX            = 0x10760001,
         CFG_UART2OUTPROT_NMEA           = 0x10760002,
         CFG_UART2OUTPROT_RTCM3X         = 0x10760004,
+
+        MSGOUT_UBX_NAV_PVT_UART1       = 0x20910007,
+        MSGOUT_UBX_NAV_POSLLH_UART1    = 0x2091002a,
+        MSGOUT_UBX_NAV_STATUS_UART1    = 0x2091001b,
+        MSGOUT_UBX_NAV_TIMEGPS_UART1   = 0x20910048,
+        MSGOUT_UBX_NAV_VELNED_UART1    = 0x20910043,
+        MSGOUT_UBX_NAV_DOP_UART1       = 0x20910039,
+        MSGOUT_UBX_MON_RF_UART1        = 0x2091035a,
+
+        MSGOUT_UBX_NAV_PVT_UART2       = 0x20910008,
+        MSGOUT_UBX_NAV_POSLLH_UART2    = 0x2091002b,
+        MSGOUT_UBX_NAV_STATUS_UART2    = 0x2091001c,
+        MSGOUT_UBX_NAV_TIMEGPS_UART2   = 0x20910049,
+        MSGOUT_UBX_NAV_VELNED_UART2    = 0x20910044,
+        MSGOUT_UBX_NAV_DOP_UART2       = 0x2091003a,
+        MSGOUT_UBX_MON_RF_UART2        = 0x2091035b,
 
         MSGOUT_RTCM_3X_TYPE4072_0_UART1 = 0x209102ff,
         MSGOUT_RTCM_3X_TYPE4072_1_UART1 = 0x20910382,
@@ -307,11 +329,13 @@ private:
         CFG_SIGNAL_GAL_E1_ENA           = 0x10310007,
         CFG_SIGNAL_GAL_E5A_ENA          = 0x10310009,
         CFG_SIGNAL_GAL_E5B_ENA          = 0x1031000a,
+        CFG_SIGNAL_GAL_E6_ENA           = 0x1031000b,
         CFG_SIGNAL_BDS_ENA              = 0x10310022,
         CFG_SIGNAL_BDS_B1_ENA           = 0x1031000d,
         CFG_SIGNAL_BDS_B1C_ENA          = 0x1031000f,
         CFG_SIGNAL_BDS_B2_ENA           = 0x1031000e,
         CFG_SIGNAL_BDS_B2A_ENA          = 0x10310028,
+        CFG_SIGNAL_BDS_B3_ENA           = 0x10310010,
         CFG_SIGNAL_QZSS_ENA             = 0x10310024,
         CFG_SIGNAL_QZSS_L1CA_ENA        = 0x10310012,
         CFG_SIGNAL_QZSS_L1S_ENA         = 0x10310014,
@@ -323,11 +347,13 @@ private:
         CFG_SIGNAL_NAVIC_ENA            = 0x10310026,
         CFG_SIGNAL_NAVIC_L5_ENA         = 0x1031001d,
 
+        CFG_SIGNAL_PLAN                 = 0x2031003a, // X20P only
+
         CFG_SIGNAL_L5_HEALTH_OVRD       = 0x10320001,
 
-        // other keys
+        // nav settings
         CFG_NAVSPG_DYNMODEL             = 0x20110021,
-
+        CFG_NAVSPG_INFIL_MINELEV        = 0x201100a4,
     };
 
     // layers for VALSET
@@ -523,6 +549,28 @@ private:
         char hwVersion[10];
         char extension[30*UBLOX_MAX_EXTENSIONS]; // extensions are not enabled
     };
+    struct PACKED ubx_mon_comms {
+        uint8_t version;
+        uint8_t nPorts;
+        uint8_t txErrors;
+        uint8_t reserved0;
+        uint8_t protIds[4];
+        PACKED struct {
+            uint16_t portId;
+            uint16_t txPending;
+            uint32_t txBytes;
+            uint8_t txUsage;
+            uint8_t txPeakUsage;
+            uint16_t rxPending;
+            uint32_t rxBytes;
+            uint8_t rxUsage;
+            uint8_t rxPeakUsage;
+            uint16_t overrunErrs;
+            uint16_t msgs[4];
+            uint8_t reserved1[8];
+            uint32_t skipped;
+        } ports[UBLOX_MAX_PORTS]; // TODO: verify Zed-X20P has only 3 ports (sample board reports only 3)
+    };
     struct PACKED ubx_nav_svinfo_header {
         uint32_t itow;
         uint8_t numCh;
@@ -619,6 +667,7 @@ private:
         ubx_mon_hw_68 mon_hw_68;
         ubx_mon_hw2 mon_hw2;
         ubx_mon_ver mon_ver;
+        ubx_mon_comms mon_comms;
         ubx_cfg_tp5 nav_tp5;
 #if UBLOX_GNSS_SETTINGS
         ubx_cfg_gnss gnss;
@@ -683,6 +732,7 @@ private:
         MSG_MON_HW = 0x09,
         MSG_MON_HW2 = 0x0B,
         MSG_MON_VER = 0x04,
+        MSG_MON_COMMS = 0x36,
         MSG_NAV_SVINFO = 0x30,
         MSG_RXM_RAW = 0x10,
         MSG_RXM_RAWX = 0x15,
@@ -718,6 +768,7 @@ private:
         UBLOX_F9 = 0x80, // comes from MON_VER hwVersion/swVersion strings
         UBLOX_M9 = 0x81, // comes from MON_VER hwVersion/swVersion strings
         UBLOX_M10 = 0x82,
+        UBLOX_X20 = 0x83,
         UBLOX_UNKNOWN_HARDWARE_GENERATION = 0xff // not in the ublox spec used for
                                                  // flagging state in the driver
     };
@@ -733,6 +784,7 @@ private:
         STEP_NAV_RATE, // poll NAV rate
         STEP_SOL,
         STEP_PORT,
+        STEP_VALSET_RATES,
         STEP_STATUS,
         STEP_POSLLH,
         STEP_VELNED,
@@ -751,9 +803,8 @@ private:
         STEP_VERSION,
         STEP_RTK_MOVBASE, // setup moving baseline
         STEP_TIM_TM2,
-        STEP_F9,
-        STEP_F9_VALIDATE,
-        STEP_M10,
+        STEP_VALSET_GNSS,
+        STEP_VALSET_GNSS_VALIDATE,
         STEP_L5,
         STEP_LAST
     };
@@ -776,7 +827,7 @@ private:
     uint32_t        _last_cfg_sent_time;
     uint8_t         _num_cfg_save_tries;
     uint32_t        _last_config_time;
-    uint32_t        _f9_config_time;
+    uint32_t        _valset_config_time;
     uint16_t        _delay_time;
     uint8_t         _next_message { STEP_PVT };
     uint8_t         _ublox_port { 255 };
@@ -821,6 +872,7 @@ private:
     };
 
     bool        _configure_message_rate(uint8_t msg_class, uint8_t msg_id, uint8_t rate);
+    bool        _zero_legacy_message_rate(uint32_t config_msg_id);
     bool        _configure_valset(ConfigKey key, const void *value, uint8_t layers=UBX_VALSET_LAYER_ALL);
     bool        _configure_list_valset(const config_list *list, uint8_t count, uint8_t layers=UBX_VALSET_LAYER_ALL);
     bool        _configure_valget(ConfigKey key);
@@ -861,14 +913,14 @@ private:
     // find index in active_config list
     int8_t find_active_config_index(ConfigKey key) const;
 
-    // return true if GPS is capable of F9 config
-    bool supports_F9_config(void) const;
+    // return true if GPS is capable of valset (F9/M10/X20) config
+    bool supports_valset_config(void) const;
 
     // is the config key a GNSS key
     bool is_gnss_key(ConfigKey key) const;
 
-    // populate config_GNSS for F9P
-    uint8_t populate_F9_gnss(void);
+    // populate config_GNSS for F9/M10/X20
+    uint8_t populate_valset_gnss(void);
     uint8_t last_configured_gnss;
 
     uint8_t _pps_freq = 1;
@@ -903,9 +955,14 @@ private:
 #endif // GPS_MOVING_BASELINE
 
     bool supports_l5;
-    static const config_list config_M10[];
     static const config_list config_L5_ovrd_ena[];
     static const config_list config_L5_ovrd_dis[];
+
+    // rate config for valset enabled modules
+    static const config_list config_rate_nav[];
+    static const config_list config_rates_uart1[];
+    static const config_list config_rates_uart2[];
+
     // scratch space for GNSS config
     config_list* config_GNSS;
 };
