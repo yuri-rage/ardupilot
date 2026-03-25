@@ -45,6 +45,13 @@ const AP_Param::Info Rover::var_info[] = {
     // @User: Advanced
     // @Bitmask: 0:Steering,1:Throttle,2:Pitch,3:Left Wheel,4:Right Wheel,5:Sailboat Heel,6:Velocity North,7:Velocity East
     GSCALAR(gcs_pid_mask,           "GCS_PID_MASK",     0),
+    
+#if MODE_AUTO_STANLEY_ENABLED
+    // @Param: AUTO_STANLEY_USE
+    // @DisplayName: Auto mode Stanley enable
+    // @Description: Use the Stanley controller in auto mode
+    GSCALAR(auto_stanley_use,        "AUTO_STANLEY_USE",  0),
+#endif
 
     // @Param: AUTO_TRIGGER_PIN
     // @DisplayName: Auto mode trigger pin

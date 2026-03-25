@@ -126,6 +126,7 @@ public:
         k_param_speed_turn_gain,    // unused
         k_param_speed_turn_dist,    // unused
         k_param_ch7_option,         // unused
+        k_param_auto_stanley_use,
         k_param_auto_trigger_pin,
         k_param_auto_kickstart,
         k_param_turn_circle,  // unused
@@ -245,6 +246,7 @@ public:
     //
     AP_Float    speed_cruise;
     AP_Int8     ch7_option;
+    AP_Int8     auto_stanley_use;
     AP_Int8     auto_trigger_pin;
     AP_Float    auto_kickstart;
     AP_Int16    gcs_pid_mask;

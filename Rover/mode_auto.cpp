@@ -15,6 +15,14 @@ bool ModeAuto::_enter()
 
     // other initialisation
     auto_triggered = false;
+    
+#if MODE_AUTO_STANLEY_ENABLED
+    if (g.auto_stanley_use > 0) {
+        auto_stanley_active = _enter_auto_stanley();
+    } else {
+        auto_stanley_active = false;
+    }
+#endif
 
     // clear guided limits
     rover.mode_guided.limit_clear();

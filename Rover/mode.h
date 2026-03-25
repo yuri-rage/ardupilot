@@ -312,6 +312,8 @@ protected:
 
     bool _enter() override;
     void _exit() override;
+    
+    bool _enter_auto_stanley();
 
     enum SubMode: uint8_t {
         WP,                // drive to a given location
@@ -366,6 +368,10 @@ private:
 
     bool waiting_to_start;  // true if waiting for EKF origin before starting mission
     bool auto_triggered;        // true when auto has been triggered to start
+    
+#if MODE_AUTO_STANLEY_ENABLED
+    bool auto_stanley_active;   // true if the Stanley controller is in use
+#endif
 
     // HeadingAndSpeed sub mode variables
     float _desired_speed;   // desired speed in HeadingAndSpeed submode
