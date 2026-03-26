@@ -30,6 +30,8 @@
 #define AR_ATTCONTROL_STEER_RATE_MAX    120.0f
 #define AR_ATTCONTROL_STEER_ACCEL_MAX   120.0f
 #define AR_ATTCONTROL_STEER_DECEL_MAX   0.0f
+#define AR_ATTCONTROL_STEER_ANG_MAX     45.0f
+#define AR_ATTCONTROL_WHLBASE_LEN       1.0f
 #define AR_ATTCONTROL_THR_SPEED_P       0.20f
 #define AR_ATTCONTROL_THR_SPEED_I       0.20f
 #define AR_ATTCONTROL_THR_SPEED_IMAX    1.00f
@@ -573,6 +575,24 @@ const AP_Param::GroupInfo AR_AttitudeControl::var_info[] = {
     // @Units: deg/s/s
     // @User: Standard
     AP_GROUPINFO("_STR_DEC_MAX", 16, AR_AttitudeControl, _steer_decel_max, AR_ATTCONTROL_STEER_DECEL_MAX),
+    
+    // @Param: _STR_ANG_MAX
+    // @DisplayName: Steering control maximum steering angle
+    // @Description: Steering control maximum steering angle (in deg). Use a positive value indicating the measured steering angle when the steering servo is fully saturated.
+    // @Range: 0 90
+    // @Increment: 0.1
+    // @Units: deg
+    // @User: Standard
+    AP_GROUPINFO("_STR_ANG_MAX", 17, AR_AttitudeControl, _steer_angle_max, AR_ATTCONTROL_STEER_ANG_MAX),
+    
+    // @Param: _WHLBASE_LEN
+    // @DisplayName: Wheelbase length
+    // @Description: Wheelbase length (m). Measured distance from center of front axle to center of rear axle.
+    // @Range: 0 100
+    // @Increment: 0.1
+    // @Units: m
+    // @User: Standard
+    AP_GROUPINFO("_WHLBASE_LEN", 18, AR_AttitudeControl, _wheelbase_len, AR_ATTCONTROL_WHLBASE_LEN),
 
     AP_GROUPEND
 };

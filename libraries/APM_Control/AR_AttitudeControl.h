@@ -156,7 +156,9 @@ private:
     AP_Float _steer_accel_max;      // steering angle acceleration max in deg/s/s
     AP_Float _steer_decel_max;      // steering angle deceleration max in deg/s/s
     AP_Float _steer_rate_max;       // steering rate control maximum rate in deg/s
-    AP_Float _turn_lateral_G_max;   // sterring maximum lateral acceleration limit in 'G'
+    AP_Float _steer_angle_max;      // steering control maximum steering angle (in deg)
+    AP_Float _wheelbase_len;        // wheelbase length (m)
+    AP_Float _turn_lateral_G_max;   // steering maximum lateral acceleration limit in 'G'
 
     // steering control
     uint32_t _steer_lat_accel_last_ms;  // system time of last call to lateral acceleration controller (i.e. get_steering_out_lat_accel)
