@@ -608,6 +608,30 @@ AR_AttitudeControl::AR_AttitudeControl() :
     AP_Param::setup_object_defaults(this, var_info);
 }
 
+// return a steering servo output given a desired steering angle in radians
+// also sets steering_limit_left and steering_limit_right flags
+// return value is in range -1.0 to +1.0
+float AR_AttitudeControl::get_steering_out_angle(float desired_angle_rad)
+{
+    float steer_angle_max_rad = radians(_steer_angle_max);
+    
+    if (is_zero(steer_angle_max_rad)) {
+        // div/0 guard
+        _steering_limit_left = false;
+        _steering_limit_right = false;
+        return 0.0f;
+    }
+   
+   // TODO: include expo or other non-linear normalization factor?
+    float steer_out = desired_angle_rad / steer_angle_max_rad;
+    _steering_limit_left = (steer_out < -1.0f);
+    _steering_limit_right = (steer_out > 1.0f);
+    
+    // TODO: limit slew rate and/or lateral accel based on TURN_MAX_G
+    
+    return constrain_float(steer_out, -1.0f, 1.0f);
+}
+
 // return a steering servo output from -1.0 to +1.0 given a desired lateral acceleration rate in m/s/s.
 // positive lateral acceleration is to the right.
 float AR_AttitudeControl::get_steering_out_lat_accel(float desired_accel, bool motor_limit_left, bool motor_limit_right, float dt)

@@ -19,6 +19,11 @@ public:
     // steering controller
     //
 
+    // return a steering servo output given a desired steering angle in radians
+    // also sets steering_limit_left and steering_limit_right flags
+    // return value is in range -1.0 to +1.0
+    float get_steering_out_angle(float desired_angle_rad);
+    
     // return a steering servo output given a desired lateral acceleration rate in m/s/s.
     // positive lateral acceleration is to the right.  dt should normally be the main loop rate.
     // return value is normally in range -1.0 to +1.0 but can be higher or lower
