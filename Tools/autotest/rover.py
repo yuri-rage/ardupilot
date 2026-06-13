@@ -432,6 +432,11 @@ class AutoTestRover(vehicle_test_suite.TestSuite):
         '''Drive Mission rover1.txt'''
         self.drive_mission("rover1.txt", strict=False)
 
+    def DriveStanleyMission(self):
+        '''Drive Mission rover1.txt using Stanley controller'''
+        self.set_parameter("ATC_STAN_USE", 1)
+        self.drive_mission("rover1.txt", strict=False)
+
     def GripperMission(self):
         '''Test Gripper Mission Items'''
         self.load_mission("rover-gripper-mission.txt")
@@ -7466,6 +7471,7 @@ return update()
             self.DriveSquare,
             self.SIMCompare,
             self.DriveMission,
+            self.DriveStanleyMission,
             # self.DriveBrake,  # disabled due to frequent failures
             self.MAV_CMD_DO_SEND_BANNER,
             self.DO_SET_MODE,
