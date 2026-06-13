@@ -264,6 +264,7 @@ bool AR_WPNav::set_desired_location(const Location& destination, Location next_d
     _scurve_next_leg.init();
     _fast_waypoint = false;
     _pivot_at_next_wp = false;
+    _next_destination = next_destination;
     if (next_destination.initialised()) {
         // check if vehicle should pivot at next waypoint
         const float next_wp_yaw_change = get_corner_angle(_origin, destination, next_destination);
@@ -355,6 +356,7 @@ bool AR_WPNav::set_desired_location_expect_fast_update(const Location &destinati
     // initialise some variables
     _origin = _destination;
     _destination = destination;
+    _next_destination = Location();
     _orig_and_dest_valid = true;
     _reached_destination = false;
 
@@ -424,6 +426,8 @@ void AR_WPNav::advance_wp_target_along_track(const Location &current_loc, float 
     // use _track_scalar_dt to slow down S-Curve time to prevent target moving too far in front of vehicle
     Vector2f curr_target_vel = _pos_control.get_desired_velocity();
     float track_scaler_dt = 1.0f;
+    const bool using_stanley = _atc.get_stan_use() && !_reversed;
+
     if (is_positive(curr_target_vel.length())) {
         Vector2f track_direction = curr_target_vel.normalized();
         const float track_error = _pos_control.get_pos_error().tofloat().dot(track_direction);
@@ -453,15 +457,59 @@ void AR_WPNav::advance_wp_target_along_track(const Location &current_loc, float 
     _pos_control.set_pos_vel_accel_target(target_pos_ptype, target_vel.xy(), target_accel.xy());
 
     // check if we've reached the waypoint
-    if (!_reached_destination && s_finished) {
-        // "fast" waypoints are complete once the intermediate point reaches the destination
-        if (_fast_waypoint) {
+    if (!_reached_destination) {
+        bool early_transition = false;
+
+        if (using_stanley && _next_destination.initialised()) {
+            float turn_radius = _turn_radius_raw;
+            if (is_zero(turn_radius)) {
+                turn_radius = 0.9f;
+            }
+            const float speed_abs = fabsf(AP::ahrs().groundspeed());
+            const float lat_accel_max = _pos_control.get_lat_accel_max();
+            float r = turn_radius;
+            if (is_positive(lat_accel_max)) {
+                r = MAX(turn_radius, sq(speed_abs) / lat_accel_max);
+            }
+            const float theta = get_corner_angle(_origin, _destination, _next_destination);
+            const float theta_rad = radians(constrain_float(fabsf(theta), 0.0f, 178.0f));
+
+            // Constrain turn radius so that the closest approach to the waypoint is within _radius
+            const float denom = 1.0f / cosf(theta_rad * 0.5f) - 1.0f;
+            if (denom > 1.0e-6f) {
+                const float r_max = (_radius * 0.9f) / denom;
+                r = MIN(r, r_max);
+            }
+
+            float tangent_dist = r * tanf(theta_rad * 0.5f);
+
+            // cap tangent distance at 50% of the current and next leg length
+            const float current_leg_len = _origin.get_distance(_destination);
+            const float next_leg_len = _destination.get_distance(_next_destination);
+            const float max_t = 0.5f * MIN(current_leg_len, next_leg_len);
+            tangent_dist = MIN(tangent_dist, max_t);
+
+            const float dist_to_dest = current_loc.get_distance(_destination);
+            const bool near_wp = dist_to_dest <= _radius;
+            const bool past_wp = current_loc.past_interval_finish_line(_origin, _destination) && (dist_to_dest <= _radius);
+            if (near_wp || past_wp) {
+                early_transition = true;
+            }
+        }
+
+        if (early_transition) {
             _reached_destination = true;
-        } else {
-            // regular waypoints also require the vehicle to be within the waypoint radius or past the "finish line"
-            const bool near_wp = current_loc.get_distance(_destination) <= _radius;
-            const bool past_wp = current_loc.past_interval_finish_line(_origin, _destination);
-            _reached_destination = near_wp || past_wp;
+        } else if (s_finished) {
+            // "fast" waypoints are complete once the intermediate point reaches the destination (unless using Stanley controller, which requires physical vehicle arrival)
+            if (_fast_waypoint && !using_stanley) {
+                _reached_destination = true;
+            } else {
+                // regular waypoints (and Stanley mode) require the physical vehicle to be within the waypoint radius
+                const float dist_to_dest = current_loc.get_distance(_destination);
+                const bool near_wp = dist_to_dest <= _radius;
+                const bool past_wp = current_loc.past_interval_finish_line(_origin, _destination) && (!using_stanley || dist_to_dest <= _radius);
+                _reached_destination = near_wp || past_wp;
+            }
         }
     }
 }
@@ -531,6 +579,7 @@ void AR_WPNav::update_steering_and_speed(const Location &current_loc, float dt)
 // settor to allow vehicle code to provide turn related param values to this library (should be updated regularly)
 void AR_WPNav::set_turn_params(float turn_radius, bool pivot_possible)
 {
+    _turn_radius_raw = turn_radius;
     _turn_radius = pivot_possible ? 0.0 : turn_radius;
     _pivot.enable(pivot_possible);
 }
@@ -602,7 +651,9 @@ bool AR_WPNav::set_origin_and_destination_to_stopping_point()
         return false;
     }
     _origin = _destination = stopping_loc;
+    _next_destination = Location();
     _orig_and_dest_valid = true;
+    _pos_control.clear_targets();
     return true;
 }
 

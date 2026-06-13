@@ -67,6 +67,15 @@ public:
     // get current destination. Note: this is not guaranteed to be valid (i.e. _orig_and_dest_valid is not checked)
     const Location &get_destination() const { return _destination; }
 
+    // get origin. Note: this is not guaranteed to be valid
+    const Location &get_origin() const { return _origin; }
+
+    // get next destination. Note: this is not guaranteed to be valid
+    const Location &get_next_destination() const { return _next_destination; }
+
+    // return true if pivot turn is active
+    bool pivot_active() const { return _pivot.active(); }
+
     // for reporting to ground station (NAV_CONTROLLER_OUTPUT message)
     float wp_bearing_cd() const { return _wp_bearing_cd; }
     float nav_bearing_cd() const { return _desired_heading_cd; }
@@ -163,7 +172,8 @@ protected:
     float _track_scalar_dt;         // time scaler to ensure scurve target doesn't get too far ahead of vehicle
 
     // variables held in vehicle code (for now)
-    float _turn_radius;             // vehicle turn radius in meters
+    float _turn_radius = 0.0f;             // vehicle turn radius in meters
+    float _turn_radius_raw = 0.0f;         // vehicle raw turn radius in meters (not set to 0 for skid steer)
 
     // variables for navigation
     uint32_t _last_update_ms;       // system time of last call to update
