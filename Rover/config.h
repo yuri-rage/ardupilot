@@ -57,6 +57,20 @@
 
 
 //////////////////////////////////////////////////////////////////////////////
+// Auto Stanley mode - allow vehicle to use the Stanley controller
+#ifndef MODE_AUTO_STANLEY_ENABLED
+# ifdef AP_ROVER_STANLEY_ENABLED
+#  define MODE_AUTO_STANLEY_ENABLED AP_ROVER_STANLEY_ENABLED
+# else
+#  if defined(BOARD_FLASH_SIZE) && (BOARD_FLASH_SIZE <= 1024)
+#   define MODE_AUTO_STANLEY_ENABLED 0
+#  else
+#   define MODE_AUTO_STANLEY_ENABLED 1
+#  endif
+# endif
+#endif
+
+//////////////////////////////////////////////////////////////////////////////
 // Developer Items
 //
 

@@ -15,6 +15,14 @@ bool ModeAuto::_enter()
 
     // other initialisation
     auto_triggered = false;
+    
+#if MODE_AUTO_STANLEY_ENABLED
+    if (g2.attitude_control.get_stan_use()) {
+        auto_stanley_active = _enter_auto_stanley();
+    } else {
+        auto_stanley_active = false;
+    }
+#endif
 
     // clear guided limits
     rover.mode_guided.limit_clear();
@@ -1055,3 +1063,11 @@ bool ModeAuto::verify_nav_script_time()
     return false;
 }
 #endif
+
+#if MODE_AUTO_STANLEY_ENABLED
+bool ModeAuto::is_stanley_active() const
+{
+    return auto_stanley_active && !g2.wp_nav.get_reversed();
+}
+#endif
+

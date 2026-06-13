@@ -440,6 +440,20 @@ void Mode::navigate_to_waypoint()
     // do not do simple avoidance because this is already handled in the position controller
     calc_throttle(g2.wp_nav.get_speed(), false);
 
+#if MODE_AUTO_STANLEY_ENABLED
+    if (is_stanley_active()) {
+        if (g2.wp_nav.pivot_active()) {
+            // retrieve turn rate from waypoint controller during pivot turn
+            const float desired_turn_rate_rads = g2.wp_nav.get_turn_rate_rads();
+            calc_steering_from_turn_rate(desired_turn_rate_rads);
+        } else {
+            // run Stanley controller
+            run_stanley_control();
+        }
+        return;
+    }
+#endif
+
     float desired_heading_cd = g2.wp_nav.oa_wp_bearing_cd();
     if (g2.sailboat.use_indirect_route(desired_heading_cd)) {
         // sailboats use heading controller when tacking upwind
