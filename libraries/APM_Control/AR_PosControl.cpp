@@ -108,6 +108,7 @@ AR_PosControl::AR_PosControl(AR_AttitudeControl& atc) :
 {
     _singleton = this;
     AP_Param::setup_object_defaults(this, var_info);
+    clear_targets();
 }
 
 // update navigation
@@ -264,6 +265,9 @@ bool AR_PosControl::init()
     _accel_desired = AP::ahrs().get_accel_ef().xy();
     _accel_target.zero();
 
+    // clear position control targets
+    clear_targets();
+
     // clear reversed setting
     _reversed = false;
 
@@ -271,6 +275,14 @@ bool AR_PosControl::init()
     init_ekf_xy_reset();
 
     return true;
+}
+
+// clear position controller targets
+void AR_PosControl::clear_targets()
+{
+    _pos_target_valid = false;
+    _vel_desired_valid = false;
+    _accel_desired_valid = false;
 }
 
 // adjust position, velocity and acceleration targets smoothly using input shaping

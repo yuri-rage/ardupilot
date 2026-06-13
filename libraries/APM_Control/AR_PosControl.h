@@ -45,6 +45,9 @@ public:
     // return true on success, false if targets cannot be initialised
     bool init();
 
+    // clear position controller targets
+    void clear_targets();
+
     // adjust position, velocity and acceleration targets smoothly using input shaping
     // pos is the target position as an offset from the EKF origin (in meters)
     // vel is the target velocity in m/s. accel is the target acceleration in m/s/s

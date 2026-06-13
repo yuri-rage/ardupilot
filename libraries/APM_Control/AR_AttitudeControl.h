@@ -4,6 +4,14 @@
 #include <AC_PID/AC_PID.h>
 #include <AC_PID/AC_P.h>
 
+#ifndef AP_ROVER_STANLEY_ENABLED
+# if defined(BOARD_FLASH_SIZE) && (BOARD_FLASH_SIZE <= 1024)
+#  define AP_ROVER_STANLEY_ENABLED 0
+# else
+#  define AP_ROVER_STANLEY_ENABLED 1
+# endif
+#endif
+
 class AR_AttitudeControl {
 public:
 
@@ -19,6 +27,11 @@ public:
     // steering controller
     //
 
+    // return a steering servo output given a desired steering angle in radians
+    // also sets steering_limit_left and steering_limit_right flags
+    // return value is in range -1.0 to +1.0
+    float get_steering_out_angle(float desired_angle_rad, float dt);
+    
     // return a steering servo output given a desired lateral acceleration rate in m/s/s.
     // positive lateral acceleration is to the right.  dt should normally be the main loop rate.
     // return value is normally in range -1.0 to +1.0 but can be higher or lower
@@ -130,6 +143,18 @@ public:
     // get speed below which vehicle is considered stopped (in m/s)
     float get_stop_speed() const { return MAX(_stop_speed, 0.0f); }
 
+    // get Stanley controller parameters
+#if AP_ROVER_STANLEY_ENABLED
+    bool get_stan_use() const { return _stan_use > 0; }
+    float get_stan_k() const { return _stan_k; }
+    float get_stan_v0() const { return _stan_v0; }
+    float get_stan_kd() const { return _stan_kd; }
+#else
+    bool get_stan_use() const { return false; }
+#endif
+    float get_steer_angle_max_rad() const { return radians(_steer_angle_max); }
+    float get_wheelbase_len() const { return _wheelbase_len; }
+
     // relax I terms of throttle and steering controllers
     void relax_I();
 
@@ -156,7 +181,15 @@ private:
     AP_Float _steer_accel_max;      // steering angle acceleration max in deg/s/s
     AP_Float _steer_decel_max;      // steering angle deceleration max in deg/s/s
     AP_Float _steer_rate_max;       // steering rate control maximum rate in deg/s
-    AP_Float _turn_lateral_G_max;   // sterring maximum lateral acceleration limit in 'G'
+    AP_Float _steer_angle_max;      // steering control maximum steering angle (in deg)
+    AP_Float _wheelbase_len;        // wheelbase length (m)
+#if AP_ROVER_STANLEY_ENABLED
+    AP_Int8  _stan_use;              // Stanley controller enable/use
+    AP_Float _stan_k;               // Stanley position cross-track gain
+    AP_Float _stan_v0;              // Stanley softening constant (m/s)
+    AP_Float _stan_kd;              // Stanley yaw rate damping gain
+#endif
+    AP_Float _turn_lateral_G_max;   // steering maximum lateral acceleration limit in 'G'
 
     // steering control
     uint32_t _steer_lat_accel_last_ms;  // system time of last call to lateral acceleration controller (i.e. get_steering_out_lat_accel)
@@ -165,6 +198,8 @@ private:
     float    _desired_turn_rate;    // desired turn rate (in radians/sec) either from external caller or from lateral acceleration controller
     bool     _steering_limit_left;  // true when the steering control has reached its left limit (e.g. motor has reached limits or accel or turn rate limits applied)
     bool     _steering_limit_right; // true when the steering control has reached its right limit (e.g. motor has reached limits or accel or turn rate limits applied)
+    float    _last_steer_angle_rad; // last steer angle in radians (used for slew rate limiting in Ackermann)
+    uint32_t _steer_angle_last_ms;  // system time of last call to get_steering_out_angle
 
     // throttle control
     uint32_t _speed_last_ms;        // system time of last call to get_throttle_out_speed
