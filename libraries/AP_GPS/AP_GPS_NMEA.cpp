@@ -865,11 +865,24 @@ void AP_GPS_NMEA::send_config(void)
                      "UNIHEADINGA %.3f\r\n",
                      rate_s);
         state.gps_yaw_configured = true;
-        FALLTHROUGH;
+        port->printf("\r\nAGRICA %.3f\r\n" \
+                     "MODE MOVINGBASE\r\n" \
+                     "GNGGA %.3f\r\n" \
+                     "GNRMC %.3f\r\n",
+                     rate_s, rate_s, rate_s);
+        if (!_have_unicore_versiona) {
+            // get version information for logging if we don't have it yet
+            port->printf("VERSIONA\r\n");
+            if (gps._save_config) {
+                // save config changes for fast startup
+                port->printf("SAVECONFIG\r\n");
+            }
+        }
+        break;
 
     case AP_GPS::GPS_TYPE_UNICORE_NMEA: {
         port->printf("\r\nAGRICA %.3f\r\n" \
-                     "MODE MOVINGBASE\r\n" \
+                     "MODE ROVER\r\n" \
                      "GNGGA %.3f\r\n" \
                      "GNRMC %.3f\r\n",
                      rate_s, rate_s, rate_s);
