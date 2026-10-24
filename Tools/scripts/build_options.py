@@ -211,6 +211,7 @@ BUILD_OPTIONS = [
 
     Feature('Rover', 'ROVER_ADVANCED_FAILSAFE', 'AP_ROVER_ADVANCED_FAILSAFE_ENABLED', 'Enable Advanced Failsafe', 0, "ADVANCED_FAILSAFE"),  # NOQA: E501
     Feature('Rover', 'ROVER_AUTO_ARM_ONCE', 'AP_ROVER_AUTO_ARM_ONCE_ENABLED', 'Make Auto-Arm-Once functionality available', 0, None),  # NOQA: E501
+    Feature('Rover', 'ROVER_STANLEY', 'AP_ROVER_STANLEY_ENABLED', 'Enable Stanley path controller in AUTO mode', 0, None),  # NOQA: E501
 
     Feature('Mission', 'MISSION_NAV_PAYLOAD_PLACE', 'AP_MISSION_NAV_PAYLOAD_PLACE_ENABLED', 'Enable NAV_PAYLOAD_PLACE', 0, None),  # noqa
     Feature('Mission', 'MISSION_WPNEXT_OFFSET', 'AP_MISSION_MAV_CMD_DO_SET_ROI_WPNEXT_OFFSET_ENABLED', 'Enable SET_ROI_WPNEXT_OFFSET command', 0, None),  # noqa

@@ -311,6 +311,7 @@ class ExtractFeatures(BuildScriptBase):
 
             ('AP_ROVER_ADVANCED_FAILSAFE_ENABLED', r'Rover::afs_fs_check'),
             ('AP_ROVER_AUTO_ARM_ONCE_ENABLED', r'Rover::handle_auto_arm_once'),
+            ('AP_ROVER_STANLEY_ENABLED', r'Mode::run_stanley_control'),
             ('AP_COPTER_ADVANCED_FAILSAFE_ENABLED', r'Copter::afs_fs_check'),
             ('AP_COPTER_AHRS_AUTO_TRIM_ENABLED', r'Copter::AHRSTrimming::auto_run'),
             ('AP_COPTER_CUSTOMCONTROL_ENABLED', r'AC_CustomControl::update'),
