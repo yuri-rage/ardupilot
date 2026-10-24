@@ -67,6 +67,28 @@ public:
     // get current destination. Note: this is not guaranteed to be valid (i.e. _orig_and_dest_valid is not checked)
     const Location &get_destination() const { return _destination; }
 
+#if AP_ROVER_STANLEY_ENABLED
+    // get origin. Note: this is not guaranteed to be valid
+    const Location &get_origin() const { return _origin; }
+
+    // get previous origin before the latest fast-waypoint transition. Note: this is not guaranteed to be valid
+    const Location &get_prev_origin() const { return _prev_origin; }
+
+    // get next destination. Note: this is not guaranteed to be valid
+    const Location &get_next_destination() const { return _next_destination; }
+
+    // inform waypoint navigation whether Stanley steering is active in the current mode
+    void set_stanley_active(bool active) { _stanley_active = active; }
+
+    // return true if pivot turn is active
+    bool pivot_active() const { return _pivot.active(); }
+
+    // calculate inscribed circular corner fillet radius (m), tangent distance (m), and signed turn angle (rad)
+    // for a 3-point turn (p1 -> p2 -> p3). Returns false if no fillet is needed or segments are too short.
+    bool calc_corner_fillet(const Location &p1, const Location &p2, const Location &p3,
+                            float &radius, float &tangent_dist, float &turn_angle_rad) const;
+#endif // AP_ROVER_STANLEY_ENABLED
+
     // for reporting to ground station (NAV_CONTROLLER_OUTPUT message)
     float wp_bearing_cd() const { return _wp_bearing_cd; }
     float nav_bearing_cd() const { return _desired_heading_cd; }
@@ -124,7 +146,7 @@ protected:
     void update_steering_and_speed(const Location &current_loc, float dt);
 
     // calculate the crosstrack error
-    // value is negative when the vehicle is on the path's left side
+    // value is positive when the vehicle is on the path's left side
     float calc_crosstrack_error(const Location& current_loc) const;
 
     // calculate yaw change at next waypoint in degrees
@@ -170,12 +192,21 @@ protected:
 
     // variables held in vehicle code (for now)
     float _turn_radius;             // vehicle turn radius in meters
+#if AP_ROVER_STANLEY_ENABLED
+    float _turn_radius_raw;         // vehicle raw turn radius in meters (not set to 0 for skid steer)
+#endif
 
     // variables for navigation
     uint32_t _last_update_ms;       // system time of last call to update
+#if AP_ROVER_STANLEY_ENABLED
+    Location _prev_origin;          // previous origin Location prior to fast-waypoint transition
+#endif
     Location _origin;               // origin Location (vehicle will travel from the origin to the destination)
     Location _destination;          // destination Location when in Guided_WP
     Location _next_destination;     // next destination Location when in Guided_WP
+#if AP_ROVER_STANLEY_ENABLED
+    bool _stanley_active;           // true when Stanley controller is active in the current mode
+#endif
     bool _orig_and_dest_valid;      // true if the origin and destination have been set
     bool _reversed;                 // execute the mission by backing up
     enum class NavControllerType {
@@ -196,7 +227,7 @@ protected:
     float _desired_lat_accel;       // desired lateral acceleration (for reporting only)
     float _desired_heading_cd;      // desired heading (back towards line between origin and destination)
     float _wp_bearing_cd;           // heading to waypoint in centi-degrees
-    float _cross_track_error;       // meters, negative when vehicle is on path's left side
+    float _cross_track_error;       // meters, positive when vehicle is on path's left side
 
     // variables for reporting
     float _distance_to_destination; // straight-line distance from vehicle to final destination in meters
