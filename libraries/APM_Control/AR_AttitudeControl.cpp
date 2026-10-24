@@ -30,6 +30,8 @@
 #define AR_ATTCONTROL_STEER_RATE_MAX    120.0f
 #define AR_ATTCONTROL_STEER_ACCEL_MAX   120.0f
 #define AR_ATTCONTROL_STEER_DECEL_MAX   0.0f
+#define AR_ATTCONTROL_STEER_ANG_MAX     45.0f
+#define AR_ATTCONTROL_WHLBASE_LEN       1.0f
 #define AR_ATTCONTROL_THR_SPEED_P       0.20f
 #define AR_ATTCONTROL_THR_SPEED_I       0.20f
 #define AR_ATTCONTROL_THR_SPEED_IMAX    1.00f
@@ -542,6 +544,66 @@ const AP_Param::GroupInfo AR_AttitudeControl::var_info[] = {
     // @User: Standard
     AP_GROUPINFO("_STR_DEC_MAX", 16, AR_AttitudeControl, _steer_decel_max, AR_ATTCONTROL_STEER_DECEL_MAX),
 
+#if AP_ROVER_STANLEY_ENABLED
+    // @Param: _STR_ANG_MAX
+    // @DisplayName: Steering control maximum wheel deflection angle
+    // @Description: Maximum steering wheel deflection angle (in deg) at full servo output for Ackermann vehicles, or virtual bicycle max steering angle for skid-steered vehicles when using the Stanley controller. Distinct from ATC_STR_ANG_P (heading P gain).
+    // @Range: 0 90
+    // @Increment: 0.1
+    // @Units: deg
+    // @User: Standard
+    AP_GROUPINFO("_STR_ANG_MAX", 17, AR_AttitudeControl, _steer_angle_max, AR_ATTCONTROL_STEER_ANG_MAX),
+
+    // @Param: _WHLBASE_LEN
+    // @DisplayName: Wheelbase length
+    // @Description: Distance (m) from the navigation reference point (AHRS/rear axle) to the front steering axle center on Ackermann vehicles, or virtual bicycle wheelbase on skid-steered vehicles when using the Stanley controller.
+    // @Range: 0 100
+    // @Increment: 0.1
+    // @Units: m
+    // @User: Standard
+    AP_GROUPINFO("_WHLBASE_LEN", 18, AR_AttitudeControl, _wheelbase_len, AR_ATTCONTROL_WHLBASE_LEN),
+
+    // @Param: _STAN_K
+    // @DisplayName: Stanley controller position cross-track gain
+    // @Description: Stanley controller position cross-track gain
+    // @Range: 0.0 10.0
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("_STAN_K", 19, AR_AttitudeControl, _stan_k, 1.0f),
+
+    // @Param: _STAN_V0
+    // @DisplayName: Stanley controller softening constant
+    // @Description: Stanley controller softening constant (m/s) to prevent division by zero when speed is near zero
+    // @Range: 0.1 5.0
+    // @Increment: 0.1
+    // @Units: m/s
+    // @User: Standard
+    AP_GROUPINFO("_STAN_V0", 20, AR_AttitudeControl, _stan_v0, 1.0f),
+
+    // @Param: _STAN_KD
+    // @DisplayName: Stanley controller yaw rate damping gain
+    // @Description: Stanley controller yaw rate damping gain to suppress steering oscillations at higher speeds.
+    // @Range: 0.0 5.0
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("_STAN_KD", 21, AR_AttitudeControl, _stan_kd, 0.0f),
+
+    // @Param: _STAN_USE
+    // @DisplayName: Stanley controller enable
+    // @Description: Use Stanley path tracking controller in AUTO mode instead of the default controller.
+    // @Values: 0:Disabled,1:Enabled
+    // @User: Standard
+    AP_GROUPINFO("_STAN_USE", 22, AR_AttitudeControl, _stan_use, 0),
+
+    // @Param: _STAN_KI
+    // @DisplayName: Stanley controller cross-track integral gain
+    // @Description: Stanley controller cross-track integral gain (in rad/(m.s)) to correct steady-state reference-point offsets from ground-fixed disturbances such as side slopes, cross-winds, or cross-currents. Integrated in the ground (NE) frame so compensation reverses across headland turns; mechanical steering linkage offset should be corrected with SERVOn_TRIM. 0 to disable.
+    // @Range: 0.0 2.0
+    // @Increment: 0.01
+    // @User: Standard
+    AP_GROUPINFO("_STAN_KI", 23, AR_AttitudeControl, _stan_ki, 0.0f),
+#endif
+
     AP_GROUPEND
 };
 
@@ -555,6 +617,69 @@ AR_AttitudeControl::AR_AttitudeControl() :
     _singleton = this;
     AP_Param::setup_object_defaults(this, var_info);
 }
+
+#if AP_ROVER_STANLEY_ENABLED
+// return a steering servo output given a desired steering angle in radians
+// also sets steering_limit_left and steering_limit_right flags
+// return value is in range -1.0 to +1.0
+float AR_AttitudeControl::get_steering_out_angle(float desired_angle_rad, bool motor_limit_left, bool motor_limit_right, float dt)
+{
+    // sanity check dt
+    dt = constrain_float(dt, 0.0f, 1.0f);
+
+    _steering_limit_left = motor_limit_left;
+    _steering_limit_right = motor_limit_right;
+
+    const float steer_angle_max_rad = radians(_steer_angle_max);
+
+    if (!is_positive(steer_angle_max_rad)) {
+        // div/0 guard
+        return 0.0f;
+    }
+
+    // Slew rate limit the desired steer angle
+    const uint32_t now = AP_HAL::millis();
+    if ((_steer_angle_last_ms == 0) || ((now - _steer_angle_last_ms) > AR_ATTCONTROL_TIMEOUT_MS)) {
+        _last_steer_angle_rad = constrain_float(desired_angle_rad, -steer_angle_max_rad, steer_angle_max_rad);
+    }
+    _steer_angle_last_ms = now;
+
+    if (is_positive(_steer_rate_max)) {
+        const float steer_rate_max_rad = radians(_steer_rate_max);
+        const float change_max = steer_rate_max_rad * dt;
+        if (desired_angle_rad < _last_steer_angle_rad - change_max) {
+            _steering_limit_left = true;
+        }
+        if (desired_angle_rad > _last_steer_angle_rad + change_max) {
+            _steering_limit_right = true;
+        }
+        desired_angle_rad = constrain_float(desired_angle_rad, _last_steer_angle_rad - change_max, _last_steer_angle_rad + change_max);
+    }
+
+    if (desired_angle_rad <= -steer_angle_max_rad) {
+        _steering_limit_left = true;
+        desired_angle_rad = -steer_angle_max_rad;
+    }
+    if (desired_angle_rad >= steer_angle_max_rad) {
+        _steering_limit_right = true;
+        desired_angle_rad = steer_angle_max_rad;
+    }
+    _last_steer_angle_rad = desired_angle_rad;
+
+    // record kinematic desired turn rate and lateral acceleration for logging/reporting
+    float speed = 0.0f;
+    if (get_forward_speed(speed)) {
+        const float wb = is_positive(_wheelbase_len) ? _wheelbase_len.get() : 1.0f;
+        _desired_turn_rate = (speed * tanf(desired_angle_rad)) / wb;
+        _steer_turn_last_ms = now;
+        _desired_lat_accel = speed * _desired_turn_rate;
+        _steer_lat_accel_last_ms = now;
+    }
+
+    const float steer_out = desired_angle_rad / steer_angle_max_rad;
+    return constrain_float(steer_out, -1.0f, 1.0f);
+}
+#endif // AP_ROVER_STANLEY_ENABLED
 
 // return a steering servo output from -1.0 to +1.0 given a desired lateral acceleration rate in m/s/s.
 // positive lateral acceleration is to the right.
