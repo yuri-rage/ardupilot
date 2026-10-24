@@ -170,6 +170,23 @@ protected:
     // high level call to navigate to waypoint
     void navigate_to_waypoint();
 
+#if AP_ROVER_STANLEY_ENABLED
+    // return true if Stanley controller is active
+    virtual bool is_stanley_active() const { return false; }
+
+    // reset Stanley controller state
+    void reset_stanley() {
+        _stanley_xtrack_int_ne.zero();
+        _stanley_last_ms = 0;
+    }
+
+    // run Stanley controller
+    void run_stanley_control();
+
+    // calculate steering output given a steering angle in radians
+    void calc_steering_from_angle(float desired_angle_rad);
+#endif
+
     // calculate steering output given a turn rate
     // desired turn rate in radians/sec. Positive to the right.
     void calc_steering_from_turn_rate(float turn_rate);
@@ -221,6 +238,10 @@ protected:
     float _distance_to_destination; // straight-line distance from vehicle to final destination in meters
     bool _reached_destination;  // true once the vehicle has reached the destination
     float _desired_yaw_cd;      // desired yaw in centi-degrees.  used in Auto, Guided and Loiter
+#if AP_ROVER_STANLEY_ENABLED
+    Vector2f _stanley_xtrack_int_ne; // ground-frame (NE) integrated cross-track steering bias in radians
+    uint32_t _stanley_last_ms;  // system time of last call to run_stanley_control
+#endif
 };
 
 
@@ -270,6 +291,9 @@ public:
     float nav_bearing() const override;
     float crosstrack_error_m() const override;
     float get_desired_lat_accel() const override;
+#if AP_ROVER_STANLEY_ENABLED
+    bool is_stanley_active() const override;
+#endif
 
     // return straight-line distance (in meters) to destination
     float get_distance_to_destination() const override;
@@ -366,6 +390,10 @@ private:
 
     bool waiting_to_start;  // true if waiting for EKF origin before starting mission
     bool auto_triggered;        // true when auto has been triggered to start
+
+#if AP_ROVER_STANLEY_ENABLED
+    bool auto_stanley_active;   // true if the Stanley controller is in use
+#endif
 
     // HeadingAndSpeed sub mode variables
     float _desired_speed;   // desired speed in HeadingAndSpeed submode

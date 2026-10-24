@@ -242,6 +242,15 @@ float Mode::get_desired_lat_accel() const
     if (!is_autopilot_mode()) {
         return 0.0f;
     }
+#if AP_ROVER_STANLEY_ENABLED
+    if (is_stanley_active()) {
+        float speed = 0.0f;
+        if (!g2.attitude_control.get_forward_speed(speed)) {
+            return 0.0f;
+        }
+        return speed * g2.attitude_control.get_desired_turn_rate();
+    }
+#endif
     return g2.wp_nav.get_lat_accel();
 }
 
@@ -448,20 +457,41 @@ void Mode::navigate_to_waypoint()
         const float turn_rate = g2.sailboat.tacking() ? g2.wp_nav.get_pivot_rate() : 0.0f;
         calc_steering_to_heading(desired_heading_cd, turn_rate);
     } else {
-        // retrieve turn rate from waypoint controller
-        float desired_turn_rate_rads = g2.wp_nav.get_turn_rate_rads();
-
         // if simple avoidance is active at very low speed do not attempt to turn
 #if AP_AVOIDANCE_ENABLED
         if (g2.avoid.limits_active() && (fabsf(attitude_control.get_desired_speed()) <= attitude_control.get_stop_speed())) {
-            desired_turn_rate_rads = 0.0f;
+            calc_steering_from_turn_rate(0.0f);
+            return;
         }
 #endif
+
+#if AP_ROVER_STANLEY_ENABLED
+        if (is_stanley_active() && !g2.wp_nav.pivot_active()) {
+            // run Stanley controller
+            run_stanley_control();
+            return;
+        }
+#endif
+
+        // retrieve turn rate from waypoint controller
+        float desired_turn_rate_rads = g2.wp_nav.get_turn_rate_rads();
 
         // call turn rate steering controller
         calc_steering_from_turn_rate(desired_turn_rate_rads);
     }
 }
+
+#if AP_ROVER_STANLEY_ENABLED
+// calculate steering output given a steering angle in radians
+void Mode::calc_steering_from_angle(float desired_angle_rad)
+{
+    const float steering_out = attitude_control.get_steering_out_angle(desired_angle_rad,
+                                                                       g2.motors.limit.steer_left,
+                                                                       g2.motors.limit.steer_right,
+                                                                       rover.G_Dt);
+    set_steering(steering_out * 4500.0f);
+}
+#endif // AP_ROVER_STANLEY_ENABLED
 
 // calculate steering output given a turn rate
 // desired turn rate in radians/sec. Positive to the right.

@@ -16,6 +16,15 @@ bool ModeAuto::_enter()
     // other initialisation
     auto_triggered = false;
 
+#if AP_ROVER_STANLEY_ENABLED
+    reset_stanley();
+    auto_stanley_active = g2.attitude_control.get_stan_use() && !g2.sailboat.sail_enabled();
+    g2.wp_nav.set_stanley_active(is_stanley_active());
+    if (auto_stanley_active) {
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Auto: Using Stanley controller.");
+    }
+#endif
+
     // clear guided limits
     rover.mode_guided.limit_clear();
 
@@ -36,6 +45,11 @@ bool ModeAuto::_enter()
 
 void ModeAuto::_exit()
 {
+#if AP_ROVER_STANLEY_ENABLED
+    reset_stanley();
+    g2.wp_nav.set_stanley_active(false);
+#endif
+
     // stop running the mission
     if (mission.state() == AP_Mission::MISSION_RUNNING) {
         mission.stop();
@@ -44,6 +58,18 @@ void ModeAuto::_exit()
 
 void ModeAuto::update()
 {
+#if AP_ROVER_STANLEY_ENABLED
+    const bool stan_use = g2.attitude_control.get_stan_use() && !g2.sailboat.sail_enabled();
+    if (stan_use != auto_stanley_active) {
+        reset_stanley();
+        if (stan_use) {
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Auto: Using Stanley controller.");
+        }
+    }
+    auto_stanley_active = stan_use;
+    g2.wp_nav.set_stanley_active(is_stanley_active());
+#endif
+
     // check if mission exists (due to being cleared while disarmed in AUTO,
     // if no mission, then stop...needs mode change out of AUTO, mission load,
     // and change back to AUTO to run a mission at this point
@@ -233,7 +259,7 @@ float ModeAuto::get_desired_lat_accel() const
 {
     switch (_submode) {
     case SubMode::WP:
-        return g2.wp_nav.get_lat_accel();
+        return Mode::get_desired_lat_accel();
     case SubMode::HeadingAndSpeed:
     case SubMode::Stop:
         return 0.0f;
@@ -1053,3 +1079,10 @@ bool ModeAuto::verify_nav_script_time()
     return false;
 }
 #endif
+
+#if AP_ROVER_STANLEY_ENABLED
+bool ModeAuto::is_stanley_active() const
+{
+    return auto_stanley_active && !g2.wp_nav.get_reversed() && !g2.sailboat.sail_enabled();
+}
+#endif // AP_ROVER_STANLEY_ENABLED
