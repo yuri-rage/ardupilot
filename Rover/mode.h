@@ -137,6 +137,11 @@ public:
     // handle tacking request (from auxiliary switch) in sailboats
     virtual void handle_tack_request();
 
+#if AP_ROVER_STANLEY_ENABLED
+    // get Stanley controller terms for GCS PID_TUNING, or nullptr if the controller has not run recently
+    const AP_PIDInfo *get_stanley_pid_info() const;
+#endif
+
 protected:
 
     // subclasses override this to perform checks before entering the mode
@@ -169,6 +174,23 @@ protected:
 
     // high level call to navigate to waypoint
     void navigate_to_waypoint();
+
+#if AP_ROVER_STANLEY_ENABLED
+    // return true if Stanley controller is active
+    virtual bool is_stanley_active() const { return false; }
+
+    // reset Stanley controller state
+    void reset_stanley() {
+        _stanley_xtrack_int_ne.zero();
+        _stanley_last_ms = 0;
+    }
+
+    // run Stanley controller
+    void run_stanley_control();
+
+    // calculate steering output given a steering angle in radians
+    void calc_steering_from_angle(float desired_angle_rad);
+#endif
 
     // calculate steering output given a turn rate
     // desired turn rate in radians/sec. Positive to the right.
@@ -221,6 +243,11 @@ protected:
     float _distance_to_destination; // straight-line distance from vehicle to final destination in meters
     bool _reached_destination;  // true once the vehicle has reached the destination
     float _desired_yaw_cd;      // desired yaw in centi-degrees.  used in Auto, Guided and Loiter
+#if AP_ROVER_STANLEY_ENABLED
+    Vector2f _stanley_xtrack_int_ne; // ground-frame (NE) integrated cross-track steering bias in radians
+    uint32_t _stanley_last_ms;  // system time of last call to run_stanley_control
+    AP_PIDInfo _stanley_pid_info;   // Stanley terms reported via PID_TUNING (see GCS_PID_MASK)
+#endif
 };
 
 
@@ -270,6 +297,9 @@ public:
     float nav_bearing() const override;
     float crosstrack_error_m() const override;
     float get_desired_lat_accel() const override;
+#if AP_ROVER_STANLEY_ENABLED
+    bool is_stanley_active() const override;
+#endif
 
     // return straight-line distance (in meters) to destination
     float get_distance_to_destination() const override;
@@ -339,6 +369,9 @@ private:
     bool verify_command(const AP_Mission::Mission_Command& cmd);
     void do_RTL(void);
     bool do_nav_wp(const AP_Mission::Mission_Command& cmd, bool always_stop_at_destination);
+#if AP_ROVER_STANLEY_ENABLED
+    bool direction_change_before_next_nav(uint16_t start_index, uint16_t next_nav_index) const;
+#endif
     void do_nav_guided_enable(const AP_Mission::Mission_Command& cmd);
     void do_nav_set_yaw_speed(const AP_Mission::Mission_Command& cmd);
     void do_nav_delay(const AP_Mission::Mission_Command& cmd);
@@ -366,6 +399,10 @@ private:
 
     bool waiting_to_start;  // true if waiting for EKF origin before starting mission
     bool auto_triggered;        // true when auto has been triggered to start
+
+#if AP_ROVER_STANLEY_ENABLED
+    bool auto_stanley_active;   // true if the Stanley controller is in use
+#endif
 
     // HeadingAndSpeed sub mode variables
     float _desired_speed;   // desired speed in HeadingAndSpeed submode

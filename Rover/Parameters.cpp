@@ -38,9 +38,9 @@ const AP_Param::Info Rover::var_info[] = {
 
     // @Param: GCS_PID_MASK
     // @DisplayName: GCS PID tuning mask
-    // @Description: bitmask of PIDs to send MAVLink PID_TUNING messages for
+    // @Description: bitmask of PIDs to send MAVLink PID_TUNING messages for. Stanley is sent on the yaw angle axis while the Stanley controller is running: desired and achieved are path and vehicle heading, P is the cross-track term, I the cross-track integral, D the yaw rate damping, FF the corner fillet feed-forward and PDmod the commanded steering angle (all in degrees). SRate is the cross-track error in meters
     // @User: Advanced
-    // @Bitmask: 0:Steering,1:Throttle,2:Pitch,3:Left Wheel,4:Right Wheel,5:Sailboat Heel,6:Velocity North,7:Velocity East
+    // @Bitmask: 0:Steering,1:Throttle,2:Pitch,3:Left Wheel,4:Right Wheel,5:Sailboat Heel,6:Velocity North,7:Velocity East,8:Stanley
     GSCALAR(gcs_pid_mask,           "GCS_PID_MASK",     0),
 
     // @Param: AUTO_TRIGGER_PIN

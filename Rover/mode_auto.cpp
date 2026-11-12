@@ -16,6 +16,15 @@ bool ModeAuto::_enter()
     // other initialisation
     auto_triggered = false;
 
+#if AP_ROVER_STANLEY_ENABLED
+    reset_stanley();
+    auto_stanley_active = g2.attitude_control.get_stan_use() && !g2.sailboat.sail_enabled();
+    g2.wp_nav.set_stanley_active(is_stanley_active());
+    if (auto_stanley_active) {
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Auto: Using Stanley controller.");
+    }
+#endif
+
     // clear guided limits
     rover.mode_guided.limit_clear();
 
@@ -36,6 +45,11 @@ bool ModeAuto::_enter()
 
 void ModeAuto::_exit()
 {
+#if AP_ROVER_STANLEY_ENABLED
+    reset_stanley();
+    g2.wp_nav.set_stanley_active(false);
+#endif
+
     // stop running the mission
     if (mission.state() == AP_Mission::MISSION_RUNNING) {
         mission.stop();
@@ -44,6 +58,17 @@ void ModeAuto::_exit()
 
 void ModeAuto::update()
 {
+#if AP_ROVER_STANLEY_ENABLED
+    const bool stan_use = g2.attitude_control.get_stan_use() && !g2.sailboat.sail_enabled();
+    if (stan_use != auto_stanley_active) {
+        reset_stanley();
+        if (stan_use) {
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Auto: Using Stanley controller.");
+        }
+    }
+    auto_stanley_active = stan_use;
+#endif
+
     // check if mission exists (due to being cleared while disarmed in AUTO,
     // if no mission, then stop...needs mode change out of AUTO, mission load,
     // and change back to AUTO to run a mission at this point
@@ -78,6 +103,11 @@ void ModeAuto::update()
 
         mission.update();
     }
+
+#if AP_ROVER_STANLEY_ENABLED
+    // update after the mission so the submode and reverse state set by any new commands are reflected
+    g2.wp_nav.set_stanley_active(is_stanley_active());
+#endif
 
     switch (_submode) {
         case SubMode::WP:
@@ -233,7 +263,7 @@ float ModeAuto::get_desired_lat_accel() const
 {
     switch (_submode) {
     case SubMode::WP:
-        return g2.wp_nav.get_lat_accel();
+        return Mode::get_desired_lat_accel();
     case SubMode::HeadingAndSpeed:
     case SubMode::Stop:
         return 0.0f;
@@ -738,7 +768,13 @@ bool ModeAuto::do_nav_wp(const AP_Mission::Mission_Command& cmd, bool always_sto
 
     // do not add next wp if there are no more navigation commands
     AP_Mission::Mission_Command next_cmd;
-    if (always_stop_at_destination || !mission.get_next_nav_cmd(cmd.index+1, next_cmd)) {
+    if (always_stop_at_destination || !mission.get_next_nav_cmd(cmd.index+1, next_cmd)
+#if AP_ROVER_STANLEY_ENABLED
+        // stop at the destination if the direction of travel changes before the next waypoint, otherwise
+        // the Stanley corner fillet would turn the vehicle to face the wrong way for the reversed leg
+        || (auto_stanley_active && direction_change_before_next_nav(cmd.index+1, next_cmd.index))
+#endif
+    ) {
         // single destination
         if (!set_desired_location(cmdloc)) {
             return false;
@@ -1053,3 +1089,46 @@ bool ModeAuto::verify_nav_script_time()
     return false;
 }
 #endif
+
+#if AP_ROVER_STANLEY_ENABLED
+// return true if the vehicle should stop at the current waypoint rather than blend into the next leg because
+// a DO_SET_REVERSE between start_index and next_nav_index changes the direction of travel, or because a
+// DO_JUMP makes next_nav_index unreliable
+bool ModeAuto::direction_change_before_next_nav(uint16_t start_index, uint16_t next_nav_index) const
+{
+    bool reversed = g2.wp_nav.get_reversed();
+    AP_Mission::Mission_Command cmd;
+    for (uint16_t i = start_index; (i < mission.num_commands()) && (i != next_nav_index); i++) {
+        if (!mission.read_cmd_from_storage(i, cmd) || AP_Mission::is_nav_cmd(cmd)) {
+            break;
+        }
+        if ((cmd.id == MAV_CMD_DO_JUMP) || (cmd.id == MAV_CMD_DO_JUMP_TAG)) {
+            const uint16_t target = (cmd.id == MAV_CMD_DO_JUMP_TAG)
+                ? mission.get_index_of_jump_tag(cmd.content.jump.target)
+                : cmd.content.jump.target;
+            AP_Mission::Mission_Command target_cmd;
+            if ((target == 0) || !mission.read_cmd_from_storage(target, target_cmd) || !AP_Mission::is_nav_cmd(target_cmd)) {
+                // AP_Mission::get_next_nav_cmd() resumes from the fall-through index after following a jump
+                // to a non-navigation command, so next_nav_index may not be where the mission actually goes
+                return true;
+            }
+            if ((target == next_nav_index) && (target < i)) {
+                // backward jump to the next waypoint is taken, so no further commands run before it
+                break;
+            }
+            // jump not taken (or forward jump to the next waypoint), keep scanning the fall-through commands
+            continue;
+        }
+        if (cmd.id == MAV_CMD_DO_SET_REVERSE) {
+            reversed = (cmd.p1 == 1);
+        }
+    }
+    return reversed != g2.wp_nav.get_reversed();
+}
+
+bool ModeAuto::is_stanley_active() const
+{
+    // RTL, Guided and other submodes delegate navigation to other modes which do not run the Stanley controller
+    return auto_stanley_active && (_submode == SubMode::WP) && !g2.wp_nav.get_reversed() && !g2.sailboat.sail_enabled();
+}
+#endif // AP_ROVER_STANLEY_ENABLED

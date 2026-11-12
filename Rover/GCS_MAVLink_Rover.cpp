@@ -348,6 +348,29 @@ void GCS_MAVLINK_Rover::send_pid_tuning()
             return;
         }
     }
+
+#if AP_ROVER_STANLEY_ENABLED
+    // Stanley path controller terms (only while the controller is running)
+    // desired/achieved: path/vehicle heading, P: cross-track term, I: cross-track integral, D: yaw rate damping,
+    // FF: corner fillet feed-forward, PDmod: commanded steering angle (all deg), SRate: cross-track error (m)
+    if (g.gcs_pid_mask & 256) {
+        pid_info = rover.control_mode->get_stanley_pid_info();
+        if (pid_info != nullptr) {
+            mavlink_msg_pid_tuning_send(chan, PID_TUNING_YAW_ANGLE,
+                                        pid_info->target,
+                                        pid_info->actual,
+                                        pid_info->FF,
+                                        pid_info->P,
+                                        pid_info->I,
+                                        pid_info->D,
+                                        pid_info->slew_rate,
+                                        pid_info->Dmod);
+            if (!HAVE_PAYLOAD_SPACE(chan, PID_TUNING)) {
+                return;
+            }
+        }
+    }
+#endif
 }
 
 void Rover::send_wheel_encoder_distance(const mavlink_channel_t chan)
