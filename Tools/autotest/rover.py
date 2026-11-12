@@ -447,6 +447,233 @@ class AutoTestRover(vehicle_test_suite.TestSuite):
         '''Drive Mission rover1.txt'''
         self.drive_mission("rover1.txt", strict=False)
 
+    def DriveStanleyMission(self):
+        '''Drive Mission rover1.txt and sharp-corner/skid-steer missions using Stanley controller'''
+        def run_and_check_xtrack(wp_check_range, max_allowed_xtrack_m, timeout=600):
+            # NAV_CONTROLLER_OUTPUT.xtrack_error reports distance from the unfilleted straight
+            # segment, so max_allowed_xtrack_m is an upper bound that includes the inscribed
+            # corner fillet arc offset at waypoint transitions.
+            self.context_push()
+            try:
+                self.context_collect('STATUSTEXT')
+                self.wait_ready_to_arm()
+                self.arm_vehicle()
+                self.change_mode('AUTO')
+                self.wait_statustext("Auto: Using Stanley controller.", timeout=10, check_context=True)
+                tstart = self.get_sim_time()
+                max_xtrack = 0.0
+                while True:
+                    if self.get_sim_time_cached() - tstart > timeout:
+                        raise AutoTestTimeoutException("Mission did not complete within timeout")
+                    if self.statustext_in_collections("Mission Complete") is not None:
+                        break
+                    m = self.mav.recv_match(type='NAV_CONTROLLER_OUTPUT', blocking=True, timeout=1)
+                    if m is None:
+                        continue
+                    seq = self.mav.waypoint_current()
+                    if seq in wp_check_range:
+                        xtrack = abs(m.xtrack_error)
+                        if xtrack > max_xtrack:
+                            max_xtrack = xtrack
+                        if xtrack > max_allowed_xtrack_m:
+                            raise NotAchievedException(
+                                f"Cross-track error {xtrack:.2f}m exceeded {max_allowed_xtrack_m:.2f}m at WP {seq}"
+                            )
+                self.progress(f"Max cross-track error: {max_xtrack:.3f}m (limit {max_allowed_xtrack_m:.2f}m)")
+            finally:
+                if self.armed():
+                    self.change_mode('HOLD')
+                    self.disarm_vehicle()
+                self.context_pop()
+
+        self.start_subtest("Ackermann mission rover1.txt")
+        self.set_parameters({
+            "ATC_STAN_USE": 1,
+            "ATC_STAN_KI": 0.0,
+            "ATC_STR_ANG_MAX": 35.0,
+            "ATC_WHLBASE_LEN": 0.63,
+        })
+        self.load_mission("rover1.txt", strict=False)
+        run_and_check_xtrack(range(3, 19), max_allowed_xtrack_m=1.0)
+
+        self.start_subtest("Stanley PID_TUNING reporting (GCS_PID_MASK bit 8)")
+        self.set_parameter("GCS_PID_MASK", 256)
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 30, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 30, 30, 0),
+        ])
+        stanley_axis = 'PID_TUNING.axis==%u' % mavutil.mavlink.PID_TUNING_YAW_ANGLE
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.change_mode('AUTO')
+        # wait for a sample with a non-zero commanded steering angle so the terms are populated
+        m = self.assert_receive_message('PID_TUNING', condition=stanley_axis + ' and PID_TUNING.PDmod != 0', timeout=10, verbose=True)
+        if not (0 <= m.desired < 360 and 0 <= m.achieved < 360):
+            raise NotAchievedException("Stanley PID_TUNING headings out of range")
+        self.change_mode('HOLD')
+        self.delay_sim_time(1, reason='let Stanley PID_TUNING time out')
+        self.assert_not_receive_message('PID_TUNING', condition=stanley_axis, timeout=2)
+        self.disarm_vehicle()
+        self.set_parameter("GCS_PID_MASK", 0)
+
+        self.start_subtest("Ackermann sharp (>140 deg) corner mission")
+        self.set_parameters({
+            "ATC_STAN_KI": 0.0,
+            "WP_SPEED": 2.0,
+        })
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 40, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 20, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 50, 0),
+        ])
+        run_and_check_xtrack(range(2, 5), max_allowed_xtrack_m=1.0)
+
+        self.start_subtest("Ackermann coincident consecutive waypoints")
+        self.set_parameters({
+            "ATC_STAN_KI": 0.0,
+            "WP_SPEED": 2.0,
+        })
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 30, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 30, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 30, 30, 0),
+        ])
+        run_and_check_xtrack(range(2, 5), max_allowed_xtrack_m=1.0, timeout=120)
+
+        self.start_subtest("Ackermann reverse leg then forward corner (DO_SET_REVERSE)")
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 25, 0, 0),
+            (mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, 0, 0, 0, {'p1': 1, 'frame': mavutil.mavlink.MAV_FRAME_GLOBAL}),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 0, 0),
+            (mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, 0, 0, 0, {'p1': 0, 'frame': mavutil.mavlink.MAV_FRAME_GLOBAL}),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 20, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 35, 20, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 35, 45, 0),
+        ])
+        run_and_check_xtrack(range(7, 9), max_allowed_xtrack_m=1.0, timeout=180)
+
+        self.start_subtest("Ackermann DO_JUMP loop back to a waypoint")
+        loop_mission = self.create_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 25, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 25, 25, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 25, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 2, 2, 0),
+            (mavutil.mavlink.MAV_CMD_DO_JUMP, 0, 0, 0, {'p1': 2, 'frame': mavutil.mavlink.MAV_FRAME_GLOBAL}),
+        ])
+        loop_mission[6].param2 = 1
+        self.check_mission_upload_download(loop_mission)
+        run_and_check_xtrack(range(3, 6), max_allowed_xtrack_m=1.0, timeout=180)
+
+        self.start_subtest("Ackermann single-leg cross-track integral (ATC_STAN_KI) check")
+        # SIM_Rover has no side-slope or non-sailboat wind model, so use SERVO1_TRIM on a single
+        # straight leg as a synthetic lateral disturbance to verify the cross-track integrator.
+        self.context_push()
+        try:
+            self.set_parameters({
+                "SERVO1_TRIM": 1575,
+                "ATC_STAN_KI": 0.25,
+                "WP_SPEED": 2.0,
+            })
+            self.upload_simple_relhome_mission([
+                (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+                (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 60, 0, 0),
+            ])
+            self.context_collect('STATUSTEXT')
+            self.wait_ready_to_arm()
+            self.arm_vehicle()
+            self.change_mode('AUTO')
+            self.wait_statustext("Auto: Using Stanley controller.", timeout=10, check_context=True)
+            tstart = self.get_sim_time()
+            settled_xtrack_samples = []
+            while True:
+                if self.get_sim_time_cached() - tstart > 120:
+                    raise AutoTestTimeoutException("Biased straight mission did not complete within timeout")
+                if self.statustext_in_collections("Mission Complete") is not None:
+                    break
+                m = self.mav.recv_match(type='NAV_CONTROLLER_OUTPUT', blocking=True, timeout=1)
+                if m is None:
+                    continue
+                if self.mav.waypoint_current() == 2 and 5 < m.wp_dist < 25:
+                    settled_xtrack_samples.append(abs(m.xtrack_error))
+            if not settled_xtrack_samples:
+                raise NotAchievedException("Did not collect settled cross-track samples on WP 2")
+            max_settled_xtrack = max(settled_xtrack_samples)
+            self.progress(
+                f"Max settled cross-track error with SERVO1_TRIM=1575 and ATC_STAN_KI=0.25: {max_settled_xtrack:.3f}m"
+            )
+            if max_settled_xtrack > 0.15:
+                raise NotAchievedException(
+                    f"Settled cross-track error {max_settled_xtrack:.3f}m exceeded 0.15m with ATC_STAN_KI=0.25"
+                )
+        finally:
+            if self.armed():
+                self.change_mode('HOLD')
+                self.disarm_vehicle()
+            self.context_pop()
+
+        self.start_subtest("Skid-steer Stanley mission")
+        self.customise_SITL_commandline([], model="rover-skid")
+        self.set_parameters({
+            "ATC_STAN_USE": 1,
+            "ATC_STAN_KI": 0.0,
+            "WP_PIVOT_ANGLE": 0,
+            "WP_SPEED": 2.0,
+        })
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 35, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 35, 35, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 20, 0),
+        ])
+        run_and_check_xtrack(range(2, 5), max_allowed_xtrack_m=1.0)
+
+        self.start_subtest("Skid-steer coincident consecutive waypoints")
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 30, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 30, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 30, 30, 0),
+        ])
+        run_and_check_xtrack(range(2, 5), max_allowed_xtrack_m=1.0, timeout=120)
+
+        # a DO_JUMP to a non-navigation command makes AP_Mission::get_next_nav_cmd() report the
+        # fall-through waypoint, so Stanley must stop at waypoint 2 instead of filleting towards waypoint 4
+        self.start_subtest("Skid-steer DO_JUMP into reverse leg")
+        frame_global = mavutil.mavlink.MAV_FRAME_GLOBAL
+        jump_mission = self.create_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 25, 0, 0),
+            (mavutil.mavlink.MAV_CMD_DO_JUMP, 0, 0, 0, {'p1': 6, 'frame': frame_global}),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 40, 40, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 40, 40, 0),
+            (mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, 0, 0, 0, {'p1': 1, 'frame': frame_global}),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 0, 0),
+            (mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, 0, 0, 0, {'p1': 0, 'frame': frame_global}),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 20, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, -15, 20, 0),
+        ])
+        jump_mission[3].param2 = 1
+        self.check_mission_upload_download(jump_mission)
+        run_and_check_xtrack(range(9, 11), max_allowed_xtrack_m=1.0, timeout=180)
+
+        self.start_subtest("Skid-steer reverse leg then forward corner (DO_SET_REVERSE)")
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 25, 0, 0),
+            (mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, 0, 0, 0, {'p1': 1, 'frame': mavutil.mavlink.MAV_FRAME_GLOBAL}),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 0, 0),
+            (mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, 0, 0, 0, {'p1': 0, 'frame': mavutil.mavlink.MAV_FRAME_GLOBAL}),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 20, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, -15, 20, 0),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, -15, 45, 0),
+        ])
+        run_and_check_xtrack(range(7, 9), max_allowed_xtrack_m=1.0, timeout=180)
+
     def GripperMission(self):
         '''Test Gripper Mission Items'''
         self.load_mission("rover-gripper-mission.txt")
@@ -8540,6 +8767,7 @@ return update()
             self.DriveSquare,
             self.SIMCompare,
             self.DriveMission,
+            self.DriveStanleyMission,
             # self.DriveBrake,  # disabled due to frequent failures
             self.MAV_CMD_DO_SEND_BANNER,
             self.DO_SET_MODE,
