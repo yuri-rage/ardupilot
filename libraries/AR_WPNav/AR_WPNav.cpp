@@ -33,6 +33,7 @@ extern const AP_HAL::HAL& hal;
 #define AR_WPNAV_RADIUS_DEFAULT         2.0f
 #define AR_WPNAV_OVERSPEED_RATIO_MAX    5.0f    // if _overspeed_enabled the vehicle may travel as quickly as 5x WP_SPEED
 #define AR_WPNAV_SNAP_MAX               15.0f   // scurve snap (change in jerk) in m/s/s/s/s
+#define AR_WPNAV_STANLEY_TURN_RADIUS_MIN 0.9f   // fallback minimum turn radius in meters
 #define AR_WPNAV_ACCEL_MAX              20.0    // acceleration used when user has specified no acceleration limit
 
 const AP_Param::GroupInfo AR_WPNav::var_info[] = {
@@ -210,16 +211,33 @@ bool AR_WPNav::set_desired_location(const Location& destination, Location next_d
         _scurve_prev_leg.init();
         _scurve_this_leg.init();
         _scurve_next_leg.init();
+        _fast_waypoint = false;
     }
 
     // shift this leg to previous leg
     _scurve_prev_leg = _scurve_this_leg;
 
     // initialise some variables
+#if AP_ROVER_STANLEY_ENABLED
+    _prev_origin = _fast_waypoint ? _origin : Location();
+    // carry the latched corner geometry over so the exit fillet continues the same arc
+    const bool inherit_fillet = _fast_waypoint && _fillet_entry.latched && destination.same_latlon_as(_next_destination);
+    _fillet_exit = inherit_fillet ? _fillet_entry : CornerFillet{};
+    _fillet_entry = CornerFillet{};
+#endif
     _origin = _destination;
     _destination = destination;
     _orig_and_dest_valid = true;
     _reached_destination = false;
+
+#if AP_ROVER_STANLEY_ENABLED
+    // if the vehicle transitioned before entering the fillet, latch the exit fillet now
+    if (_prev_origin.initialised() && !_fillet_exit.latched) {
+        if (calc_corner_fillet(_prev_origin, _origin, _destination, _fillet_exit.radius, _fillet_exit.tangent_dist, _fillet_exit.turn_angle_rad)) {
+            _fillet_exit.latched = true;
+        }
+    }
+#endif
 
     update_distance_and_bearing_to_destination();
 
@@ -263,6 +281,9 @@ bool AR_WPNav::set_desired_location(const Location& destination, Location next_d
     _scurve_next_leg.init();
     _fast_waypoint = false;
     _pivot_at_next_wp = false;
+#if AP_ROVER_STANLEY_ENABLED
+    _next_destination = Location();
+#endif
     if (next_destination.initialised()) {
         // check if vehicle should pivot at next waypoint
         const float next_wp_yaw_change = get_corner_angle(_origin, destination, next_destination);
@@ -289,6 +310,15 @@ bool AR_WPNav::set_desired_location(const Location& destination, Location next_d
 
             // next destination provided so fast waypoint
             _fast_waypoint = true;
+#if AP_ROVER_STANLEY_ENABLED
+            // retain next destination for Stanley corner fillets and apex transition. Gated on the
+            // parameter only (not _stanley_active) because the mode may not yet have updated
+            // _stanley_active when the mission advances (e.g. DO_SET_REVERSE(0) immediately before
+            // this waypoint). Not stored otherwise to avoid changing object avoidance inputs.
+            if (_atc.get_stan_use()) {
+                _next_destination = next_destination;
+            }
+#endif
         }
     }
 
@@ -352,6 +382,12 @@ bool AR_WPNav::set_desired_location_expect_fast_update(const Location &destinati
     }
 
     // initialise some variables
+#if AP_ROVER_STANLEY_ENABLED
+    _prev_origin = Location();
+    _next_destination = Location();
+    _fillet_entry = CornerFillet{};
+    _fillet_exit = CornerFillet{};
+#endif
     _origin = _destination;
     _destination = destination;
     _orig_and_dest_valid = true;
@@ -423,6 +459,7 @@ void AR_WPNav::advance_wp_target_along_track(const Location &current_loc, float 
     // use _track_scalar_dt to slow down S-Curve time to prevent target moving too far in front of vehicle
     Vector2f curr_target_vel = _pos_control.get_desired_velocity();
     float track_scaler_dt = 1.0f;
+
     if (is_positive(curr_target_vel.length())) {
         Vector2f track_direction = curr_target_vel.normalized();
         const float track_error = _pos_control.get_pos_error().tofloat().dot(track_direction);
@@ -452,15 +489,78 @@ void AR_WPNav::advance_wp_target_along_track(const Location &current_loc, float 
     _pos_control.set_pos_vel_accel_target(target_pos_ptype, target_vel.xy(), target_accel.xy());
 
     // check if we've reached the waypoint
-    if (!_reached_destination && s_finished) {
-        // "fast" waypoints are complete once the intermediate point reaches the destination
-        if (_fast_waypoint) {
+    if (!_reached_destination) {
+        bool early_transition = false;
+
+        // true when the Stanley controller owns this corner (valid fillet geometry and apex transition available)
+        bool stanley_corner = false;
+        bool in_fillet_zone = false;
+#if AP_ROVER_STANLEY_ENABLED
+        const bool using_stanley = _stanley_active && _atc.get_stan_use() && !_reversed;
+        if (using_stanley && _fast_waypoint && _next_destination.initialised()) {
+            const Vector2f seg1 = _origin.get_distance_NE(_destination);
+            const Vector2f seg2 = _destination.get_distance_NE(_next_destination);
+            const float current_leg_len = seg1.length();
+            const float next_leg_len = seg2.length();
+            if (current_leg_len >= 1.0e-3f && next_leg_len >= 1.0e-3f) {
+                stanley_corner = true;
+
+                float r = 0.0f;
+                float tangent_dist = 0.0f;
+                float turn_angle_rad = 0.0f;
+                const bool fillet_valid = get_corner_fillet(true, r, tangent_dist, turn_angle_rad);
+
+                // Transition at the corner apex (bisector of incoming and outgoing segments)
+                // once the vehicle is within the corner zone
+                const Vector2f u1 = seg1 / current_leg_len;
+                const Vector2f u2 = seg2 / next_leg_len;
+                const Vector2f veh_from_dest = _destination.get_distance_NE(current_loc);
+                const float dist_to_dest = veh_from_dest.length();
+                const Vector2f bisector_tangent = u1 + u2;
+                const bool past_apex = (bisector_tangent.length_squared() > 1.0e-4f)
+                    ? (veh_from_dest.dot(bisector_tangent) >= 0.0f)
+                    : (veh_from_dest.dot(u1) >= 0.0f);
+
+                // corner zone uses the same longitudinal test as the Stanley fillet entry so that a vehicle
+                // following the fillet slightly inside the arc (further than tangent_dist from the waypoint)
+                // still transitions
+                const float along_rem = -veh_from_dest.dot(u1);
+                in_fillet_zone = along_rem <= tangent_dist;
+
+                // latch fillet geometry on entry so it does not shrink or move as the vehicle brakes or accelerates
+                if (fillet_valid && in_fillet_zone && !_fillet_entry.latched) {
+                    _fillet_entry = CornerFillet{r, tangent_dist, turn_angle_rad, true};
+                }
+                const bool in_corner_zone = (dist_to_dest <= MAX(_radius.get(), tangent_dist)) ||
+                                            (is_positive(tangent_dist) && in_fillet_zone);
+
+                early_transition = past_apex && in_corner_zone;
+            }
+        }
+#endif // AP_ROVER_STANLEY_ENABLED
+
+        if (early_transition) {
             _reached_destination = true;
-        } else {
-            // regular waypoints also require the vehicle to be within the waypoint radius or past the "finish line"
-            const bool near_wp = current_loc.get_distance(_destination) <= _radius;
-            const bool past_wp = current_loc.past_interval_finish_line(_origin, _destination);
-            _reached_destination = near_wp || past_wp;
+        } else if (s_finished) {
+            // "fast" waypoints are complete once the intermediate point reaches the destination unless the Stanley
+            // controller owns the corner, in which case it transitions at the corner apex or finish line.
+            // Stanley fast waypoints without a usable corner (e.g. coincident waypoints or next destination unknown)
+            // use the standard behaviour so the vehicle cannot stall short of the finish line.
+            if (_fast_waypoint && !stanley_corner) {
+                _reached_destination = true;
+            } else {
+                const float dist_to_dest = current_loc.get_distance(_destination);
+                // Only accept the waypoint radius for a Stanley corner if the vehicle has stalled inside the
+                // fillet before reaching the apex, so the corner is not cut short.
+                bool radius_check_ok = !stanley_corner;
+                if (stanley_corner && in_fillet_zone) {
+                    float speed = 0.0f;
+                    radius_check_ok = !_atc.get_forward_speed(speed) || (fabsf(speed) <= _atc.get_stop_speed());
+                }
+                const bool near_wp = (dist_to_dest <= _radius) && radius_check_ok;
+                const bool past_wp = current_loc.past_interval_finish_line(_origin, _destination);
+                _reached_destination = near_wp || past_wp;
+            }
         }
     }
 }
@@ -530,12 +630,115 @@ void AR_WPNav::update_steering_and_speed(const Location &current_loc, float dt)
 // settor to allow vehicle code to provide turn related param values to this library (should be updated regularly)
 void AR_WPNav::set_turn_params(float turn_radius, bool pivot_possible)
 {
+#if AP_ROVER_STANLEY_ENABLED
+    _turn_radius_raw = turn_radius;
+#endif
     _turn_radius = pivot_possible ? 0.0 : turn_radius;
     _pivot.enable(pivot_possible);
 }
 
+#if AP_ROVER_STANLEY_ENABLED
+// get minimum achievable turn radius (m) used for Stanley corner fillets
+float AR_WPNav::get_stanley_turn_radius_min() const
+{
+    float turn_radius_min = _turn_radius_raw;
+    const float steer_max_rad = _atc.get_steer_angle_max_rad();
+    const float wheelbase = _atc.get_wheelbase_len();
+    if (is_positive(steer_max_rad) && is_positive(wheelbase)) {
+        turn_radius_min = MAX(turn_radius_min, wheelbase / tanf(steer_max_rad));
+    }
+    if (!is_positive(turn_radius_min)) {
+        turn_radius_min = AR_WPNAV_STANLEY_TURN_RADIUS_MIN;
+    }
+    return turn_radius_min;
+}
+
+// get latched (or current) corner fillet for the corner at the destination (is_entry) or origin (!is_entry)
+bool AR_WPNav::get_corner_fillet(bool is_entry, float &radius, float &tangent_dist, float &turn_angle_rad) const
+{
+    const CornerFillet &fillet = is_entry ? _fillet_entry : _fillet_exit;
+    if (fillet.latched) {
+        radius = fillet.radius;
+        tangent_dist = fillet.tangent_dist;
+        turn_angle_rad = fillet.turn_angle_rad;
+        return true;
+    }
+    if (!is_entry) {
+        radius = 0.0f;
+        tangent_dist = 0.0f;
+        turn_angle_rad = 0.0f;
+        return false;
+    }
+    return calc_corner_fillet(_origin, _destination, _next_destination, radius, tangent_dist, turn_angle_rad);
+}
+
+// calculate inscribed circular corner fillet radius (m), tangent distance (m), and signed turn angle (rad)
+// for a 3-point turn (p1 -> p2 -> p3). Returns false if no fillet is needed or segments are too short.
+bool AR_WPNav::calc_corner_fillet(const Location &p1, const Location &p2, const Location &p3,
+                                  float &radius, float &tangent_dist, float &turn_angle_rad) const
+{
+    radius = 0.0f;
+    tangent_dist = 0.0f;
+    turn_angle_rad = 0.0f;
+
+    if (!p1.initialised() || !p2.initialised() || !p3.initialised()) {
+        return false;
+    }
+
+    const Vector2f seg1 = p1.get_distance_NE(p2);
+    const Vector2f seg2 = p2.get_distance_NE(p3);
+    const float seg1_len = seg1.length();
+    const float seg2_len = seg2.length();
+    if (seg1_len < 1.0e-3f || seg2_len < 1.0e-3f) {
+        return false;
+    }
+
+    turn_angle_rad = wrap_PI(seg2.angle() - seg1.angle());
+    const float theta = constrain_float(fabsf(turn_angle_rad), 0.0f, radians(178.0f));
+    if (theta < radians(1.0f)) {
+        return false;
+    }
+
+    const float turn_radius_min = get_stanley_turn_radius_min();
+
+    float speed = 0.0f;
+    _atc.get_forward_speed(speed);
+    const float speed_abs = fabsf(speed);
+    const float lat_accel_max = _atc.get_turn_lat_accel_max();
+
+    float r = turn_radius_min;
+    if (is_positive(lat_accel_max) && speed_abs > 0.1f) {
+        r = MAX(turn_radius_min, sq(speed_abs) / lat_accel_max);
+    }
+
+    // constrain turn radius so that the closest approach to the waypoint is within _radius
+    const float half_theta = theta * 0.5f;
+    const float denom = 1.0f / cosf(half_theta) - 1.0f;
+    if (denom > 1.0e-6f) {
+        const float r_max = (_radius * 0.9f) / denom;
+        r = MIN(r, r_max);
+    }
+    r = MAX(r, turn_radius_min);
+
+    const float tan_half_theta = MAX(tanf(half_theta), 1.0e-6f);
+    float t_dist = r * tan_half_theta;
+    const float max_t = 0.5f * MIN(seg1_len, seg2_len);
+    if (t_dist > max_t) {
+        t_dist = max_t;
+        r = t_dist / tan_half_theta;
+    }
+    if (r < 0.1f || t_dist < 1.0e-3f) {
+        return false;
+    }
+
+    radius = r;
+    tangent_dist = t_dist;
+    return true;
+}
+#endif // AP_ROVER_STANLEY_ENABLED
+
 // calculate the crosstrack error
-// value is negative when the vehicle is on the path's left side
+// value is positive when the vehicle is on the path's left side
 float AR_WPNav::calc_crosstrack_error(const Location& current_loc) const
 {
     if (!_orig_and_dest_valid) {
@@ -600,6 +803,12 @@ bool AR_WPNav::set_origin_and_destination_to_stopping_point()
     if (!get_stopping_location(stopping_loc)) {
         return false;
     }
+#if AP_ROVER_STANLEY_ENABLED
+    _prev_origin = Location();
+    _next_destination = Location();
+    _fillet_entry = CornerFillet{};
+    _fillet_exit = CornerFillet{};
+#endif
     _origin = _destination = stopping_loc;
     _orig_and_dest_valid = true;
     return true;
